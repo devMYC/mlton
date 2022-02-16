@@ -23,10 +23,12 @@ void displayGCState (GC_state s, FILE *stream) {
   fprintf (stream,
            "\tlimit = "FMTPTR"\n"
            "\tstackBottom = "FMTPTR"\n"
-           "\tstackTop = "FMTPTR"\n",
+           "\tstackTop = "FMTPTR"\n"
+           "\tfrontier = "FMTPTR"\n",
            (uintptr_t)s->limit,
            (uintptr_t)s->stackBottom,
-           (uintptr_t)s->stackTop);
+           (uintptr_t)s->stackTop,
+           (uintptr_t)s->frontier);
 }
 
 size_t sizeofGCStateCurrentStackUsed (GC_state s) {
@@ -72,10 +74,10 @@ void setGCStateCurrentHeap (GC_state s,
       s->mutatorMarksCards
       /* There is enough space in the generational nursery. */
       and (nurseryBytesRequested <= genNurserySize)
+
       /* The nursery is large enough to be worth it. */
-      and (((float)(h->size - s->lastMajorStatistics.bytesLive) 
-            / (float)nurserySize) 
-           <= s->controls.ratios.nursery)
+      and nurserySize >= 2 * NUR_SIZE_MIN
+
       and /* There is a reason to use generational GC. */
       (
        /* We must use it for debugging purposes. */
@@ -89,8 +91,21 @@ void setGCStateCurrentHeap (GC_state s,
                : s->controls.ratios.markCompactGenerational))
        )) {
     s->canMinor = TRUE;
-    nursery = genNursery;
-    nurserySize = genNurserySize;
+    if (nurseryBytesRequested <= h->fixedNurSize
+        and h->fixedNurSize < genNurserySize)
+    {
+      nursery = alignFrontier (s, s->limitPlusSlop - h->fixedNurSize);
+      nurserySize = h->fixedNurSize = (size_t)(s->limitPlusSlop - nursery);
+      h->nurFixed = true;
+      if (s->lastMajorStatistics.numMinorGCs == 0)
+        h->nurThresh = NUR_THRESH_MUL
+                     * (size_t)(nursery - (h->start + h->oldGenSize + oldGenBytesRequested))
+                     / nurserySize;
+    } else {
+      nursery = genNursery;
+      nurserySize = genNurserySize;
+      h->nurFixed = false;
+    }
     clearCardMap (s);
   } else {
     unless (nurseryBytesRequested <= nurserySize)
@@ -103,6 +118,8 @@ void setGCStateCurrentHeap (GC_state s,
   assert (nurseryBytesRequested <= (size_t)(s->limitPlusSlop - s->frontier));
   assert (isFrontierAligned (s, s->heap.nursery));
   assert (hasHeapBytesFree (s, oldGenBytesRequested, nurseryBytesRequested));
+  if (s->controls.messages)
+    fprintf (stderr, "-------- canMinor=%d\n", s->canMinor);
 }
 
 Bool_t GC_getAmOriginal (GC_state s) {

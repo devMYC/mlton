@@ -14,17 +14,35 @@ void minorGC (GC_state s) {
 void majorGC (GC_state s, size_t bytesRequested, bool mayResize) {
   uintmax_t numGCs;
   size_t desiredSize;
+  uintmax_t numMinorGCs;
+  int nurInc;
 
+  numMinorGCs = s->lastMajorStatistics.numMinorGCs;
   s->lastMajorStatistics.numMinorGCs = 0;
-  numGCs = 
+  const size_t heapSizeBefore = s->heap.size;
+  const size_t lastBytesLive = s->lastMajorStatistics.bytesLive;
+  numGCs =
     s->cumulativeStatistics.numCopyingGCs 
     + s->cumulativeStatistics.numMarkCompactGCs;
   if (0 < numGCs
       and ((float)(s->cumulativeStatistics.numHashConsGCs) / (float)(numGCs)
            < s->controls.ratios.hashCons))
     s->hashConsDuringGC = TRUE;
-  desiredSize = 
-    sizeofHeapDesired (s, s->lastMajorStatistics.bytesLive + bytesRequested, 0);
+
+  nurInc = 0;
+  if (s->canMinor and s->heap.nurFixed) {
+    if (numMinorGCs < 0.9 * s->heap.nurThresh)
+      nurInc = (int)((float)(s->heap.nurThresh - numMinorGCs) / s->heap.nurThresh * s->heap.fixedNurSize);
+    else if (numMinorGCs > 1.1 * s->heap.nurThresh)
+      nurInc = -(int)((float)(numMinorGCs - s->heap.nurThresh) / s->heap.nurThresh * s->heap.fixedNurSize);
+    if (nurInc < 0 and s->heap.fixedNurSize - (size_t)(-nurInc) < NUR_SIZE_MIN)
+      nurInc = -1 * (s->heap.fixedNurSize - NUR_SIZE_MIN);
+    desiredSize = (size_t)(s->heap.size * (1 + s->winStatistics.movAvgMajorLiveRatio)) + (size_t)max(nurInc, 0);
+    desiredSize = min (desiredSize, s->sysvals.ram);
+  } else {
+    desiredSize =
+      sizeofHeapDesired (s, s->lastMajorStatistics.bytesLive + bytesRequested, 0);
+  }
   if (not FORCE_MARK_COMPACT
       and not s->hashConsDuringGC // only markCompact can hash cons
       and s->heap.withMapsSize < s->sysvals.ram
@@ -35,19 +53,74 @@ void majorGC (GC_state s, size_t bytesRequested, bool mayResize) {
     majorMarkCompactGC (s);
   s->hashConsDuringGC = FALSE;
   s->lastMajorStatistics.bytesLive = s->heap.oldGenSize;
+
+  float liveRatio = (float)s->lastMajorStatistics.bytesLive / heapSizeBefore;
+  s->cumulativeStatistics.avgMajorLiveRatio =
+    (s->cumulativeStatistics.avgMajorLiveRatio * numGCs + liveRatio) / (numGCs+1);
+  float* win = s->winStatistics.recentMajorLiveRatios;
+  if (win[MOV_AVG_WIN_SIZE-1] >= 0.0f) {
+    s->winStatistics.movAvgMajorLiveRatio = (s->winStatistics.movAvgMajorLiveRatio
+                                             * MOV_AVG_WIN_SIZE
+                                             - win[0]
+                                             + liveRatio)
+                                            / MOV_AVG_WIN_SIZE;
+    memmove(win, win+1, (MOV_AVG_WIN_SIZE-1) * sizeof(float));
+    win[MOV_AVG_WIN_SIZE-1] = liveRatio;
+  } else {
+    float sum = liveRatio;
+    unsigned int i = 0;
+    for (; win[i] >= 0.0f; i++)
+      sum += win[i];
+    win[i] = liveRatio;
+    s->winStatistics.movAvgMajorLiveRatio = sum / (i+1);
+  }
+  if (s->controls.messages) {
+    fprintf (stderr, "[GC: "
+                     "Live/Heap=%s/%s (%.2f%%), "
+                     "AvgLR=%.2f%%, "
+                     "MovAvgLR=%.2f%%]\n",
+             uintmaxToCommaString(s->lastMajorStatistics.bytesLive),
+             uintmaxToCommaString(heapSizeBefore),
+             100*liveRatio,
+             100*s->cumulativeStatistics.avgMajorLiveRatio,
+             100*s->winStatistics.movAvgMajorLiveRatio);
+    fprintf (stderr, "-------- recentLR=[");
+    for (int i = 0; i < MOV_AVG_WIN_SIZE; i++)
+        fprintf (stderr, "%.2f%s", 100*win[i], i+1==MOV_AVG_WIN_SIZE ? "" : ", ");
+    fprintf (stderr, "]\n");
+    fprintf (stderr, "[GC: LiveDataGrowth=%.2f%%, AllocRateGrowth=%.2f%%]\n",
+             100*((double)s->lastMajorStatistics.bytesLive - lastBytesLive) / lastBytesLive,
+             100*((double)s->winStatistics.movAllocRate - s->cumulativeStatistics.avgAllocRate) / s->cumulativeStatistics.avgAllocRate);
+  }
+
   if (s->lastMajorStatistics.bytesLive > s->cumulativeStatistics.maxBytesLive)
     s->cumulativeStatistics.maxBytesLive = s->lastMajorStatistics.bytesLive;
+
+  if (s->canMinor and s->heap.nurFixed and s->heap.shrinkFlag) {
+    s->heap.shrinkFlag = false;
+    const size_t keepSize = s->heap.size
+                          - (size_t)((s->heap.nursery
+                                      - max (nurInc, 0)
+                                      - (s->heap.start + s->lastMajorStatistics.bytesLive))
+                                     * min (0.5, (float)(numMinorGCs - s->heap.nurThresh) / numMinorGCs));
+    shrinkHeap (s, &s->heap, keepSize);
+  }
+
   /* Notice that the s->lastMajorStatistics.bytesLive below is
    * different than the s->lastMajorStatistics.bytesLive used as an
    * argument to createHeapSecondary above.  Above, it was an
    * estimate.  Here, it is exactly how much was live after the GC.
    */
-  if (mayResize) {
+  else if (mayResize) {
     resizeHeap (s, s->lastMajorStatistics.bytesLive + bytesRequested);
   }
   setCardMapAndCrossMap (s);
   resizeHeapSecondary (s);
   assert (s->heap.oldGenSize + bytesRequested <= s->heap.size);
+  if (s->canMinor and s->heap.nurFixed and not (nurInc == 0)) {
+    if (nurInc < 0) s->heap.fixedNurSize -= (size_t)(-nurInc);
+    else s->heap.fixedNurSize += (size_t)(nurInc);
+  }
 }
 
 void growStackCurrent (GC_state s) {
@@ -193,6 +266,7 @@ void performGC (GC_state s,
   assert (hasHeapBytesFree (s, oldGenBytesRequested, nurseryBytesRequested));
   assert (invariantForGC (s));
   leaveGC (s);
+  gettimeofday (&s->lastMajorStatistics.prevDoneAt, 0);
 }
 
 void ensureInvariantForMutator (GC_state s, bool force) {

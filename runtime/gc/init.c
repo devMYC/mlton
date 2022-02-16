@@ -316,6 +316,8 @@ int GC_init (GC_state s, int argc, char **argv) {
   s->cumulativeStatistics.numHashConsGCs = 0;
   s->cumulativeStatistics.numMarkCompactGCs = 0;
   s->cumulativeStatistics.numMinorGCs = 0;
+  s->cumulativeStatistics.avgMajorLiveRatio = 0.0f;
+  s->cumulativeStatistics.avgAllocRate = 0;
   rusageZero (&s->cumulativeStatistics.ru_gc);
   rusageZero (&s->cumulativeStatistics.ru_gcCopying);
   rusageZero (&s->cumulativeStatistics.ru_gcMarkCompact);
@@ -327,6 +329,13 @@ int GC_init (GC_state s, int argc, char **argv) {
   s->lastMajorStatistics.bytesLive = 0;
   s->lastMajorStatistics.kind = GC_COPYING;
   s->lastMajorStatistics.numMinorGCs = 0;
+  gettimeofday (&s->lastMajorStatistics.prevDoneAt, 0);
+  s->winStatistics.movAvgMajorLiveRatio = 0.0f;
+  s->winStatistics.movAllocRate = 0;
+  for (int i = 0; i < MOV_AVG_WIN_SIZE; i++) {
+    s->winStatistics.recentMajorLiveRatios[i] = -1.0f;
+    s->winStatistics.recentMinorAllocRates[i] = -1;
+  }
   s->savedThread = BOGUS_OBJPTR;
   initHeap (s, &s->secondaryHeap);
   s->signalHandlerThread = BOGUS_OBJPTR;

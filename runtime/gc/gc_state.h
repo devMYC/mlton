@@ -40,6 +40,7 @@ struct GC_state {
   bool hashConsDuringGC;
   struct GC_heap heap;
   struct GC_lastMajorStatistics lastMajorStatistics;
+  struct GC_winStatistics winStatistics;
   pointer limitPlusSlop; /* limit + GC_HEAP_LIMIT_SLOP */
   int (*loadGlobals)(FILE *f); /* loads the globals from the file. */
   uint32_t magic; /* The magic number for this executable. */

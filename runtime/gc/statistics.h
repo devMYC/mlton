@@ -29,6 +29,9 @@ struct GC_cumulativeStatistics {
   uintmax_t numMarkCompactGCs;
   uintmax_t numMinorGCs;
 
+  float avgMajorLiveRatio;
+  uintmax_t avgAllocRate;
+
   struct rusage ru_gc; /* total resource usage in gc. */
   struct rusage ru_gcCopying; /* resource usage in major copying gcs. */
   struct rusage ru_gcMarkCompact; /* resource usage in major mark-compact gcs. */
@@ -40,6 +43,16 @@ struct GC_lastMajorStatistics {
   size_t bytesLive; /* Number of bytes live at most recent major GC. */
   GC_majorKind kind;
   uintmax_t numMinorGCs;
+  struct timeval prevDoneAt;
+};
+
+#define MOV_AVG_WIN_SIZE 5
+
+struct GC_winStatistics {
+  float movAvgMajorLiveRatio;
+  float recentMajorLiveRatios[MOV_AVG_WIN_SIZE];
+  uintmax_t movAllocRate; // bytes per sec
+  long long recentMinorAllocRates[MOV_AVG_WIN_SIZE];
 };
 
 #endif /* (defined (MLTON_GC_INTERNAL_TYPES)) */

@@ -158,5 +158,90 @@ void minorCheneyCopyGC (GC_state s) {
       fprintf (stderr, 
                "[GC: Finished minor Cheney-copy; copied %s bytes.]\n",
                uintmaxToCommaString(bytesCopied));
+    if (s->heap.nurFixed
+        and not s->heap.shrinkFlag
+        and s->lastMajorStatistics.numMinorGCs > s->heap.nurThresh
+        and (s->heap.nursery - (s->heap.start + s->heap.oldGenSize))
+              / (float)(s->heap.nursery - (s->heap.start + s->lastMajorStatistics.bytesLive))
+            > SHRINK_THRESH)
+      s->heap.shrinkFlag = true;
+
+  }
+
+  const long million = 1000000;
+  const uintmax_t prevMovAllocRate = s->winStatistics.movAllocRate;
+  struct timeval end;
+  gettimeofday (&end, 0);
+  struct rusage total;
+  getrusage (RUSAGE_SELF, &total);
+
+  struct rusage *ru_gc = &s->cumulativeStatistics.ru_gc;
+  const long gcusec = (ru_gc->ru_utime.tv_sec + ru_gc->ru_stime.tv_sec)
+                    * million
+                    + ru_gc->ru_utime.tv_usec
+                    + ru_gc->ru_stime.tv_usec;
+
+  const long totalusec = (total.ru_utime.tv_sec + total.ru_stime.tv_sec)
+                       * million
+                       + total.ru_utime.tv_usec
+                       + total.ru_stime.tv_usec;
+
+  const long nonGCusec = totalusec - gcusec;
+
+  struct timeval *start = &s->lastMajorStatistics.prevDoneAt;
+  const long usecFromStart = (end.tv_sec - start->tv_sec)
+                           * million
+                           + end.tv_usec
+                           - start->tv_usec;
+
+  const uintmax_t avgAllocRate = (uintmax_t)((double)s->cumulativeStatistics.bytesAllocated / nonGCusec * million);
+  s->cumulativeStatistics.avgAllocRate = avgAllocRate;
+
+  const uintmax_t allocRate = (uintmax_t)((double)bytesAllocated / usecFromStart * million);
+  struct GC_winStatistics *win = &s->winStatistics;
+
+  if (win->recentMinorAllocRates[MOV_AVG_WIN_SIZE-1] >= 0) {
+      win->movAllocRate = (win->movAllocRate * MOV_AVG_WIN_SIZE
+                          - (uintmax_t)win->recentMinorAllocRates[0]
+                          + allocRate
+                          ) / MOV_AVG_WIN_SIZE;
+      memmove (win->recentMinorAllocRates,
+               win->recentMinorAllocRates+1,
+               (MOV_AVG_WIN_SIZE-1) * sizeof(long long));
+      win->recentMinorAllocRates[MOV_AVG_WIN_SIZE-1] = (long long)allocRate;
+  } else {
+      unsigned int i = 0;
+      uintmax_t sum = allocRate;
+      for (; i < MOV_AVG_WIN_SIZE && win->recentMinorAllocRates[i] >= 0; i++)
+        sum += (uintmax_t)win->recentMinorAllocRates[i];
+      win->recentMinorAllocRates[i] = (long long)allocRate;
+      win->movAllocRate = sum / (i+1);
+  }
+
+  if (s->controls.messages) {
+    fprintf (stderr, "[GC: Allocated/Elapsed: "
+                     "%s bytes/%s usecs "
+                     "(%s bytes/sec).]\n",
+             uintmaxToCommaString(bytesAllocated),
+             uintmaxToCommaString(usecFromStart),
+             uintmaxToCommaString(allocRate));
+    fprintf (stderr, "[GC: Moving allocation rate %s bytes/sec (%s%.2f%%).]\n",
+             uintmaxToCommaString(win->movAllocRate),
+             win->movAllocRate >= prevMovAllocRate ? "" : "-",
+             prevMovAllocRate == 0
+               ? 0.0f
+               : 100*(float)(win->movAllocRate >= prevMovAllocRate
+                   ? win->movAllocRate - prevMovAllocRate
+                   : prevMovAllocRate - win->movAllocRate) / prevMovAllocRate);
+    fprintf (stderr, "-------- [");
+    for (int i = 0; i < MOV_AVG_WIN_SIZE; i++)
+        fprintf (stderr, "%s%s",
+                 win->recentMinorAllocRates[i] < 0
+                   ? "-1"
+                   : uintmaxToCommaString((uintmax_t)win->recentMinorAllocRates[i]),
+                 i+1 >= MOV_AVG_WIN_SIZE ? "" : ", ");
+    fprintf (stderr, "]\n");
+    fprintf (stderr, "[GC: Average allocation rate %s bytes/sec.]\n",
+             uintmaxToCommaString(avgAllocRate));
   }
 }

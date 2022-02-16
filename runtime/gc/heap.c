@@ -30,6 +30,11 @@ void initHeap (__attribute__ ((unused)) GC_state s,
   h->size = 0;
   h->start = NULL;
   h->withMapsSize = 0;
+
+  h->shrinkFlag = false;
+  h->nurFixed = false;
+  h->fixedNurSize = NUR_SIZE_MIN;
+  h->nurThresh = 0;
 }
 
 /* sizeofHeapDesired (s, l, cs)

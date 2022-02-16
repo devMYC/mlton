@@ -28,6 +28,7 @@ void initWorld (GC_state s) {
   createHeap (s, &s->heap,
               sizeofHeapDesired (s, s->lastMajorStatistics.bytesLive, 0),
               s->lastMajorStatistics.bytesLive);
+  s->cumulativeStatistics.avgMajorLiveRatio = (float)s->lastMajorStatistics.bytesLive / s->heap.size;
   setCardMapAndCrossMap (s);
   start = alignFrontier (s, s->heap.start);
   s->frontier = start;

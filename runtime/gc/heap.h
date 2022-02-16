@@ -22,6 +22,9 @@
  *  start                                  nursery
  *  |------------------------------withMapsSize-----------------------------|
 */
+#define NUR_THRESH_MUL 5 // multiplier for calculating nursery threshold
+#define SHRINK_THRESH 0.4f
+#define NUR_SIZE_MIN (512 << 10) // 512kB
 
 typedef struct GC_heap {
   pointer nursery; /* start of nursery */
@@ -29,6 +32,11 @@ typedef struct GC_heap {
   size_t size; /* size of heap */
   pointer start; /* start of heap (and old generation) */
   size_t withMapsSize; /* size of heap with card/cross maps */
+
+  bool shrinkFlag;
+  bool nurFixed;
+  size_t fixedNurSize;
+  uintmax_t nurThresh;
 } *GC_heap;
 
 #define GC_HEAP_LIMIT_SLOP 512
