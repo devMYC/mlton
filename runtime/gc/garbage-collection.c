@@ -23,8 +23,12 @@ void majorGC (GC_state s, size_t bytesRequested, bool mayResize) {
       and ((float)(s->cumulativeStatistics.numHashConsGCs) / (float)(numGCs)
            < s->controls.ratios.hashCons))
     s->hashConsDuringGC = TRUE;
+  if (s->controls.messages)
+      fprintf(stderr, "[GC: PID output %f]\n", pid_getoutput(s->pidController));
   desiredSize = 
     sizeofHeapDesired (s, s->lastMajorStatistics.bytesLive + bytesRequested, 0);
+  struct timespec beforeGC, afterGC;
+  clock_gettime(CLOCK_MONOTONIC, &beforeGC);
   if (not FORCE_MARK_COMPACT
       and not s->hashConsDuringGC // only markCompact can hash cons
       and s->heap.withMapsSize < s->sysvals.ram
@@ -48,6 +52,22 @@ void majorGC (GC_state s, size_t bytesRequested, bool mayResize) {
   setCardMapAndCrossMap (s);
   resizeHeapSecondary (s);
   assert (s->heap.oldGenSize + bytesRequested <= s->heap.size);
+  clock_gettime(CLOCK_MONOTONIC, &afterGC);
+  const double gcOverhead = pid_timediff(&beforeGC, &afterGC)
+                          / pid_timediff(&s->pidStatistics.start, &afterGC);
+  s->pidStatistics.winGCOverhead = (PID_STATS_WIN_SIZE
+                                    * s->pidStatistics.winGCOverhead
+                                    - s->pidStatistics.recentGCOverheads[0]
+                                    + gcOverhead)
+                                   / PID_STATS_WIN_SIZE;
+  pid_update(s, s->pidStatistics.winGCOverhead);
+  memmove(s->pidStatistics.recentGCOverheads,
+          s->pidStatistics.recentGCOverheads + 1,
+          (PID_STATS_WIN_SIZE-1) * sizeof(double));
+  s->pidStatistics.recentGCOverheads[PID_STATS_WIN_SIZE-1] = gcOverhead;
+  s->pidStatistics.bytesAllocated = 0;
+  s->pidStatistics.start.tv_sec = afterGC.tv_sec;
+  s->pidStatistics.start.tv_nsec = afterGC.tv_nsec;
 }
 
 void growStackCurrent (GC_state s) {

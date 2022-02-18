@@ -67,6 +67,7 @@ typedef GC_state GCState_t;
 #include "gc/call-stack.h"
 #include "gc/profiling.h"
 #include "gc/rusage.h"
+#include "gc/pid-controller.h"
 #include "gc/gc_state.h"
 #include "gc/init-world.h"
 #include "gc/world.h"

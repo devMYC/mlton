@@ -327,6 +327,17 @@ int GC_init (GC_state s, int argc, char **argv) {
   s->lastMajorStatistics.bytesLive = 0;
   s->lastMajorStatistics.kind = GC_COPYING;
   s->lastMajorStatistics.numMinorGCs = 0;
+  clock_gettime(CLOCK_MONOTONIC, &s->pidStatistics.start);
+  s->pidStatistics.bytesAllocated = 0;
+  double Kp, Ki, Kd, setpoint;
+  Kp = 1;
+  Ki = 1;
+  Kd = 1;
+  setpoint = 0.05;
+  s->pidStatistics.winGCOverhead = setpoint;
+  for (int i = 0; i < PID_STATS_WIN_SIZE; i++)
+      s->pidStatistics.recentGCOverheads[i] = setpoint;
+  s->pidController = new_controller(Kp, Ki, Kd, setpoint);
   s->savedThread = BOGUS_OBJPTR;
   initHeap (s, &s->secondaryHeap);
   s->signalHandlerThread = BOGUS_OBJPTR;

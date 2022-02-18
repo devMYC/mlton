@@ -40,6 +40,7 @@ struct GC_state {
   bool hashConsDuringGC;
   struct GC_heap heap;
   struct GC_lastMajorStatistics lastMajorStatistics;
+  struct GC_PIDStatistics pidStatistics;
   pointer limitPlusSlop; /* limit + GC_HEAP_LIMIT_SLOP */
   int (*loadGlobals)(FILE *f); /* loads the globals from the file. */
   uint32_t magic; /* The magic number for this executable. */
@@ -48,6 +49,7 @@ struct GC_state {
   GC_objectHashTable objectHashTable;
   GC_objectType objectTypes; /* Array of object types. */
   uint32_t objectTypesLength; /* Cardinality of objectTypes array. */
+  GC_PIDController pidController;
   struct GC_profiling profiling;
   GC_frameIndex (*returnAddressToFrameIndex) (GC_returnAddress ra);
   objptr savedThread; /* Result of GC_copyCurrentThread.

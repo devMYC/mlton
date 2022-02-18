@@ -42,4 +42,13 @@ struct GC_lastMajorStatistics {
   uintmax_t numMinorGCs;
 };
 
+#define PID_STATS_WIN_SIZE 5
+
+struct GC_PIDStatistics {
+    struct timespec start;
+    uintmax_t bytesAllocated;
+    double winGCOverhead;
+    double recentGCOverheads[PID_STATS_WIN_SIZE];
+};
+
 #endif /* (defined (MLTON_GC_INTERNAL_TYPES)) */

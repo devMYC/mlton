@@ -132,6 +132,8 @@ void minorCheneyCopyGC (GC_state s) {
                (uintptr_t)(s->heap.nursery),
                uintmaxToCommaString(bytesAllocated));
     }
+    struct timespec beforeGC, afterGC;
+    clock_gettime(CLOCK_MONOTONIC, &beforeGC);
     assert (invariantForGC (s));
     forwardState.amInMinorGC = TRUE;
     forwardState.toStart = s->heap.start + s->heap.oldGenSize;
@@ -154,6 +156,22 @@ void minorCheneyCopyGC (GC_state s) {
     s->lastMajorStatistics.numMinorGCs++;
     if (detailedGCTime (s))
       stopTiming (&ru_start, &s->cumulativeStatistics.ru_gcMinor);
+    clock_gettime(CLOCK_MONOTONIC, &afterGC);
+    const double gcOverhead = pid_timediff(&beforeGC, &afterGC)
+                            / pid_timediff(&s->pidStatistics.start, &afterGC);
+    s->pidStatistics.winGCOverhead = (PID_STATS_WIN_SIZE
+                                      * s->pidStatistics.winGCOverhead
+                                      - s->pidStatistics.recentGCOverheads[0]
+                                      + gcOverhead)
+                                     / PID_STATS_WIN_SIZE;
+    pid_update(s, s->pidStatistics.winGCOverhead);
+    memmove(s->pidStatistics.recentGCOverheads,
+            s->pidStatistics.recentGCOverheads + 1,
+            (PID_STATS_WIN_SIZE-1) * sizeof(double));
+    s->pidStatistics.recentGCOverheads[PID_STATS_WIN_SIZE-1] = gcOverhead;
+    s->pidStatistics.bytesAllocated = 0;
+    s->pidStatistics.start.tv_sec = afterGC.tv_sec;
+    s->pidStatistics.start.tv_nsec = afterGC.tv_nsec;
     if (DEBUG_GENERATIONAL or s->controls.messages)
       fprintf (stderr, 
                "[GC: Finished minor Cheney-copy; copied %s bytes.]\n",
