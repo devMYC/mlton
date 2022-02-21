@@ -9,7 +9,8 @@ typedef struct _GC_PIDController *GC_PIDController;
 static GC_PIDController new_controller(double Kp, double Ki, double Kd, double setpoint);
 static double pid_update(GC_state s, double measurement);
 static double pid_timediff(struct timespec *start, struct timespec *end);
-static double pid_getoutput(GC_PIDController ctrlr);
+static void pid_accgctime(struct timespec *acc, struct timespec *start, struct timespec *end);
+static double pid_measure(GC_state s, struct timespec *end);
 
 #endif
 

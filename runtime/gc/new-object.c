@@ -23,7 +23,6 @@ pointer newObject (GC_state s,
   assert (allocInOldGen
           ? hasHeapBytesFree (s, bytesRequested, 0)
           : hasHeapBytesFree (s, 0, bytesRequested));
-  s->pidStatistics.bytesAllocated += bytesRequested;
   if (allocInOldGen) {
     frontier = s->heap.start + s->heap.oldGenSize;
     s->heap.oldGenSize += bytesRequested;

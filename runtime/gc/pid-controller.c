@@ -6,7 +6,6 @@ struct _GC_PIDController {
     double prevErr;
     double prevI;
     double prevD;
-    double prevOutput;
 };
 
 GC_PIDController
@@ -27,30 +26,56 @@ double
 pid_update(GC_state s, double measurement)
 {
     GC_PIDController ctrlr = s->pidController;
-    double dt = (double)(s->pidStatistics.bytesAllocated >> 10); // kB
+    double dt = (double)s->pidStatistics.bytesAllocated / (1UL << 10);
+    if (s->controls.messages)
+    {
+        fprintf(stderr, "[GC: dt=%f ", dt);
+        fprintf(stderr, "recentGCOverheads=[");
+        for (int i = 0; i < PID_STATS_WIN_SIZE; i++)
+            fprintf(stderr, "%f%s", s->pidStatistics.recentGCOverheads[i], i+1 == PID_STATS_WIN_SIZE ? "" : ", ");
+        fprintf(stderr, "]]\n");
+    }
     double err = ctrlr->setpoint - measurement;
-    double P = err * ctrlr->Kp;
-    double I = 0.5 * ctrlr->Ki * dt * (err + ctrlr->prevErr) + ctrlr->prevI;
-    double D = 2 * ctrlr->Kd / dt * (err - ctrlr->prevErr) - ctrlr->prevD;
+    double P = ctrlr->Kp * err;
+    double I = ctrlr->Ki * 0.5 * dt * (err + ctrlr->prevErr) + ctrlr->prevI;
+    double D = ctrlr->Kd * 2.0 / dt * (err - ctrlr->prevErr) - ctrlr->prevD;
+    // double D = ctrlr->Kd * (err - ctrlr->prevErr) / dt;
     ctrlr->prevErr = err;
     ctrlr->prevI = I;
     ctrlr->prevD = D;
-    double output = P + I + D;
-    ctrlr->prevOutput = output;
-    return output;
+    return P + I + D;
 }
+
+static const uintmax_t BILLION = 1000000000;
 
 double
 pid_timediff(struct timespec *start, struct timespec *end)
 {
-    static const uintmax_t BILLION = 1000000000;
     return (BILLION * (end->tv_sec - start->tv_sec) + end->tv_nsec - start->tv_nsec)
             / (double)BILLION;
 }
 
-double
-pid_getoutput(GC_PIDController ctrlr)
+void
+pid_accgctime(struct timespec *acc, struct timespec *start, struct timespec *end)
 {
-    return ctrlr->prevOutput;
+    double diff = pid_timediff(start, end);
+    uintmax_t sec = diff;
+    uintmax_t nsec = acc->tv_nsec + (uintmax_t)((diff - sec) * BILLION);
+    acc->tv_sec += sec;
+    if (nsec < BILLION)
+        acc->tv_nsec = nsec;
+    else {
+        sec = nsec / BILLION;
+        acc->tv_sec += sec;
+        acc->tv_nsec = nsec - BILLION * sec;
+    }
+}
+
+double
+pid_measure(GC_state s, struct timespec *now)
+{
+    struct timespec *acc = &s->pidStatistics.gcTimeAcc;
+    double gcsec = acc->tv_sec + (double)acc->tv_nsec / BILLION;
+    return gcsec / pid_timediff(&s->pidStatistics.lastMajorGC, now);
 }
 

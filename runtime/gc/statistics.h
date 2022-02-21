@@ -45,7 +45,8 @@ struct GC_lastMajorStatistics {
 #define PID_STATS_WIN_SIZE 5
 
 struct GC_PIDStatistics {
-    struct timespec start;
+    struct timespec lastMajorGC;
+    struct timespec gcTimeAcc; // accumulator
     uintmax_t bytesAllocated;
     double winGCOverhead;
     double recentGCOverheads[PID_STATS_WIN_SIZE];

@@ -23,12 +23,11 @@ void majorGC (GC_state s, size_t bytesRequested, bool mayResize) {
       and ((float)(s->cumulativeStatistics.numHashConsGCs) / (float)(numGCs)
            < s->controls.ratios.hashCons))
     s->hashConsDuringGC = TRUE;
-  if (s->controls.messages)
-      fprintf(stderr, "[GC: PID output %f]\n", pid_getoutput(s->pidController));
-  desiredSize = 
-    sizeofHeapDesired (s, s->lastMajorStatistics.bytesLive + bytesRequested, 0);
   struct timespec beforeGC, afterGC;
   clock_gettime(CLOCK_MONOTONIC, &beforeGC);
+  // desiredSize =
+  //   sizeofHeapDesired (s, s->lastMajorStatistics.bytesLive + bytesRequested, 0);
+  desiredSize = s->heap.size;
   if (not FORCE_MARK_COMPACT
       and not s->hashConsDuringGC // only markCompact can hash cons
       and s->heap.withMapsSize < s->sysvals.ram
@@ -41,33 +40,63 @@ void majorGC (GC_state s, size_t bytesRequested, bool mayResize) {
   s->lastMajorStatistics.bytesLive = s->heap.oldGenSize;
   if (s->lastMajorStatistics.bytesLive > s->cumulativeStatistics.maxBytesLive)
     s->cumulativeStatistics.maxBytesLive = s->lastMajorStatistics.bytesLive;
-  /* Notice that the s->lastMajorStatistics.bytesLive below is
-   * different than the s->lastMajorStatistics.bytesLive used as an
-   * argument to createHeapSecondary above.  Above, it was an
-   * estimate.  Here, it is exactly how much was live after the GC.
-   */
-  if (mayResize) {
-    resizeHeap (s, s->lastMajorStatistics.bytesLive + bytesRequested);
-  }
-  setCardMapAndCrossMap (s);
-  resizeHeapSecondary (s);
-  assert (s->heap.oldGenSize + bytesRequested <= s->heap.size);
   clock_gettime(CLOCK_MONOTONIC, &afterGC);
-  const double gcOverhead = pid_timediff(&beforeGC, &afterGC)
-                          / pid_timediff(&s->pidStatistics.start, &afterGC);
+  pid_accgctime(&s->pidStatistics.gcTimeAcc, &beforeGC, &afterGC);
+  const double gcOverhead = pid_measure(s, &afterGC);
   s->pidStatistics.winGCOverhead = (PID_STATS_WIN_SIZE
                                     * s->pidStatistics.winGCOverhead
                                     - s->pidStatistics.recentGCOverheads[0]
                                     + gcOverhead)
                                    / PID_STATS_WIN_SIZE;
-  pid_update(s, s->pidStatistics.winGCOverhead);
+  if (s->controls.messages)
+      fprintf(stderr, "[GC: PID measurement %f/%f/%sMB]\n",
+              gcOverhead,
+              s->pidStatistics.winGCOverhead,
+              uintmaxToCommaString(s->cumulativeStatistics.bytesAllocated >> 20));
+  s->pidStatistics.bytesAllocated = s->cumulativeStatistics.bytesAllocated
+                                  - s->pidStatistics.bytesAllocated;
+  // const double pidOut = pid_update(s, s->pidStatistics.winGCOverhead);
+  const double pidOut = pid_update(s, gcOverhead);
+  if (s->controls.messages)
+      fprintf(stderr, "[GC: PID output %f]\n", pidOut);
   memmove(s->pidStatistics.recentGCOverheads,
           s->pidStatistics.recentGCOverheads + 1,
           (PID_STATS_WIN_SIZE-1) * sizeof(double));
   s->pidStatistics.recentGCOverheads[PID_STATS_WIN_SIZE-1] = gcOverhead;
-  s->pidStatistics.bytesAllocated = 0;
-  s->pidStatistics.start.tv_sec = afterGC.tv_sec;
-  s->pidStatistics.start.tv_nsec = afterGC.tv_nsec;
+  s->pidStatistics.bytesAllocated = s->cumulativeStatistics.bytesAllocated;
+  s->pidStatistics.lastMajorGC.tv_sec = afterGC.tv_sec;
+  s->pidStatistics.lastMajorGC.tv_nsec = afterGC.tv_nsec;
+  s->pidStatistics.gcTimeAcc.tv_sec = 0;
+  s->pidStatistics.gcTimeAcc.tv_nsec = 0;
+  double ratio = 1.0 - pidOut;
+  const double liveRatio = (double)s->heap.oldGenSize / s->heap.size;
+  if (ratio < 1.0 and ratio < liveRatio * 1.25)
+      ratio = min(1.0, liveRatio * 1.25);
+  size_t newSize = (size_t)(ratio * (double)(s->heap.size >> 10)) << 10;
+  newSize = min(s->sysvals.ram,
+                align(max(newSize, (size_t)((s->heap.oldGenSize + bytesRequested) / 0.6)),
+                      s->sysvals.pageSize));
+  if (s->controls.messages)
+      fprintf(stderr, "[GC: old/new heap size: %s/%s]\n",
+              uintmaxToCommaString(s->heap.size),
+              uintmaxToCommaString(newSize));
+  if (newSize < s->heap.size)
+      shrinkHeap(s, &s->heap, newSize);
+  else if (newSize > s->heap.size) {
+      releaseHeap(s, &s->secondaryHeap);
+      growHeap(s, newSize, s->heap.oldGenSize + bytesRequested);
+  }
+  /* Notice that the s->lastMajorStatistics.bytesLive below is
+   * different than the s->lastMajorStatistics.bytesLive used as an
+   * argument to createHeapSecondary above.  Above, it was an
+   * estimate.  Here, it is exactly how much was live after the GC.
+   */
+  // if (mayResize) {
+  //   resizeHeap (s, s->lastMajorStatistics.bytesLive + bytesRequested);
+  // }
+  setCardMapAndCrossMap (s);
+  resizeHeapSecondary (s);
+  assert (s->heap.oldGenSize + bytesRequested <= s->heap.size);
 }
 
 void growStackCurrent (GC_state s) {
