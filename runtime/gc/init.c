@@ -330,10 +330,13 @@ int GC_init (GC_state s, int argc, char **argv) {
   clock_gettime(CLOCK_MONOTONIC, &s->pidStatistics.lastMajorGC);
   s->pidStatistics.bytesAllocated = 0;
   double Kp, Ki, Kd, setpoint;
-  Kp = 5.7402; // 9.567
-  Ki = 0.000224;
-  Kd = 36737.28; // 35.87625;
-  setpoint = 0.15;
+  // Kp = 5.7402; // 9.567
+  // Ki = 0.000224;
+  // Kd = 36737.28; // 35.87625;
+  Kp = 9.0; // 15.0
+  Ki = 0.00010546875;
+  Kd = 166.667; // 192000.0;
+  setpoint = 0.05;
   s->pidStatistics.winGCOverhead = setpoint;
   for (int i = 0; i < PID_STATS_WIN_SIZE; i++)
       s->pidStatistics.recentGCOverheads[i] = setpoint;

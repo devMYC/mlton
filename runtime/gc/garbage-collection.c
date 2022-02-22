@@ -56,7 +56,8 @@ void majorGC (GC_state s, size_t bytesRequested, bool mayResize) {
   s->pidStatistics.bytesAllocated = s->cumulativeStatistics.bytesAllocated
                                   - s->pidStatistics.bytesAllocated;
   // const double pidOut = pid_update(s, s->pidStatistics.winGCOverhead);
-  const double pidOut = pid_update(s, gcOverhead);
+  // const double pidOut = pid_update(s, gcOverhead);
+  const double pidOut = pid_update2(s, gcOverhead);
   if (s->controls.messages)
       fprintf(stderr, "[GC: PID output %f]\n", pidOut);
   memmove(s->pidStatistics.recentGCOverheads,
@@ -70,12 +71,10 @@ void majorGC (GC_state s, size_t bytesRequested, bool mayResize) {
   s->pidStatistics.gcTimeAcc.tv_nsec = 0;
   double ratio = 1.0 - pidOut;
   const double liveRatio = (double)s->heap.oldGenSize / s->heap.size;
-  if (ratio < 1.0 and ratio < liveRatio * 1.25)
-      ratio = min(1.0, liveRatio * 1.25);
+  if (ratio < 1.0) // we're about to shrink the heap
+      ratio = max(ratio, liveRatio / 0.6); // keep at least 40% free space
   size_t newSize = (size_t)(ratio * (double)(s->heap.size >> 10)) << 10;
-  newSize = min(s->sysvals.ram,
-                align(max(newSize, (size_t)((s->heap.oldGenSize + bytesRequested) / 0.6)),
-                      s->sysvals.pageSize));
+  newSize = min(s->sysvals.ram, align(newSize + bytesRequested, s->sysvals.pageSize));
   if (s->controls.messages)
       fprintf(stderr, "[GC: old/new heap size: %s/%s]\n",
               uintmaxToCommaString(s->heap.size),

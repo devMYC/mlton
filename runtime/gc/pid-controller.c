@@ -3,9 +3,10 @@ struct _GC_PIDController {
     double Ki;
     double Kd;
     double setpoint;
-    double prevErr;
+    double prevErr[2];
     double prevI;
     double prevD;
+    double prevOut;
 };
 
 GC_PIDController
@@ -16,9 +17,11 @@ new_controller(double Kp, double Ki, double Kd, double setpoint)
     ctrlr->Ki = Ki;
     ctrlr->Kd = Kd;
     ctrlr->setpoint = setpoint;
-    ctrlr->prevErr = 0.0;
+    ctrlr->prevErr[0] = 0.0;
+    ctrlr->prevErr[1] = 0.0;
     ctrlr->prevI = 0.0;
     ctrlr->prevD = 0.0;
+    ctrlr->prevOut = 0.0;
     return ctrlr;
 }
 
@@ -26,24 +29,56 @@ double
 pid_update(GC_state s, double measurement)
 {
     GC_PIDController ctrlr = s->pidController;
-    double dt = (double)s->pidStatistics.bytesAllocated / (1UL << 10);
+    double dt = (double)s->pidStatistics.bytesAllocated / (1 << 10);
     if (s->controls.messages)
     {
         fprintf(stderr, "[GC: dt=%f ", dt);
         fprintf(stderr, "recentGCOverheads=[");
         for (int i = 0; i < PID_STATS_WIN_SIZE; i++)
-            fprintf(stderr, "%f%s", s->pidStatistics.recentGCOverheads[i], i+1 == PID_STATS_WIN_SIZE ? "" : ", ");
+            fprintf(stderr, "%f%s",
+                    s->pidStatistics.recentGCOverheads[i],
+                    i+1 == PID_STATS_WIN_SIZE ? "" : ", ");
         fprintf(stderr, "]]\n");
     }
     double err = ctrlr->setpoint - measurement;
     double P = ctrlr->Kp * err;
-    double I = ctrlr->Ki * 0.5 * dt * (err + ctrlr->prevErr) + ctrlr->prevI;
-    double D = ctrlr->Kd * 2.0 / dt * (err - ctrlr->prevErr) - ctrlr->prevD;
-    // double D = ctrlr->Kd * (err - ctrlr->prevErr) / dt;
-    ctrlr->prevErr = err;
+    double I = ctrlr->Ki*dt*0.5 * (err + ctrlr->prevErr[0]) + ctrlr->prevI;
+    double D = ctrlr->Kd*2.0/dt * (err - ctrlr->prevErr[0]) - ctrlr->prevD;
+    // double D = ctrlr->Kd * (err - ctrlr->prevErr[0]) / dt;
+    ctrlr->prevErr[0] = err;
     ctrlr->prevI = I;
     ctrlr->prevD = D;
     return P + I + D;
+}
+
+double
+pid_update2(GC_state s, double measurement)
+{
+    GC_PIDController ctrlr = s->pidController;
+    const double dt = (double)s->pidStatistics.bytesAllocated / (1 << 10);
+    if (s->controls.messages)
+    {
+        fprintf(stderr, "[GC: dt=%f ", dt);
+        fprintf(stderr, "recentGCOverheads=[");
+        for (int i = 0; i < PID_STATS_WIN_SIZE; i++)
+            fprintf(stderr, "%f%s",
+                    s->pidStatistics.recentGCOverheads[i],
+                    i+1 == PID_STATS_WIN_SIZE ? "" : ", ");
+        fprintf(stderr, "]]\n");
+    }
+    const double err = ctrlr->setpoint - measurement;
+    const double a0 = ctrlr->Kp + ctrlr->Ki*dt*0.5 + ctrlr->Kd/dt;
+    const double a1 = ctrlr->Ki*dt*0.5 - ctrlr->Kp - 2.0*ctrlr->Kd/dt;
+    const double a2 = ctrlr->Kd / dt;
+    // const double b0 = 1.0;
+    // const double b1 = -1.0;
+    // const double b2 = 0.0;
+    // const out = 1/b0 * (a0*err + a1*ctrlr->prevErr[1] + a2*ctrlr->prevErr[0] - b1*ctrlr->prevOut);
+    const double out = a0*err + a1*ctrlr->prevErr[1] + a2*ctrlr->prevErr[0] + ctrlr->prevOut;
+    ctrlr->prevErr[0] = ctrlr->prevErr[1];
+    ctrlr->prevErr[1] = err;
+    ctrlr->prevOut = out;
+    return out;
 }
 
 static const uintmax_t BILLION = 1000000000;
