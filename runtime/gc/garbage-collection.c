@@ -69,12 +69,19 @@ void majorGC (GC_state s, size_t bytesRequested, bool mayResize) {
   s->pidStatistics.lastMajorGC.tv_nsec = afterGC.tv_nsec;
   s->pidStatistics.gcTimeAcc.tv_sec = 0;
   s->pidStatistics.gcTimeAcc.tv_nsec = 0;
-  double ratio = 1.0 - pidOut;
+  double ratio = 1.0 + pidOut;
   const double liveRatio = (double)s->heap.oldGenSize / s->heap.size;
   if (ratio < 1.0) // we're about to shrink the heap
       ratio = max(ratio, liveRatio / 0.6); // keep at least 40% free space
-  size_t newSize = (size_t)(ratio * (double)(s->heap.size >> 10)) << 10;
-  newSize = min(s->sysvals.ram, align(newSize + bytesRequested, s->sysvals.pageSize));
+  // else if (s->lastMajorStatistics.kind == GC_MARK_COMPACT)
+  //     ratio = liveRatio / 0.3; // keep at most 70% free space
+  size_t newSize;
+  if (ratio > 1.0 && (double)s->sysvals.ram / s->heap.size < ratio)
+      newSize = s->sysvals.ram;
+  else
+      newSize = align(((size_t)(ratio * (double)(s->heap.size >> 10)) << 10) + bytesRequested,
+                      s->sysvals.pageSize);
+  newSize = min(s->sysvals.ram, newSize);
   if (s->controls.messages)
       fprintf(stderr, "[GC: old/new heap size: %s/%s]\n",
               uintmaxToCommaString(s->heap.size),
@@ -236,7 +243,7 @@ void performGC (GC_state s,
     unless (s->signalsInfo.amInSignalHandler) 
       s->signalsInfo.signalIsPending = TRUE;
   }
-  if (DEBUG) 
+  if (DEBUG)
     displayGCState (s, stderr);
   assert (hasHeapBytesFree (s, oldGenBytesRequested, nurseryBytesRequested));
   assert (invariantForGC (s));

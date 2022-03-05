@@ -9,6 +9,9 @@ struct _GC_PIDController {
     double prevOut;
 };
 
+static const double minOut = -0.5;
+static const double maxOut = 7.0;
+
 GC_PIDController
 new_controller(double Kp, double Ki, double Kd, double setpoint)
 {
@@ -28,8 +31,9 @@ new_controller(double Kp, double Ki, double Kd, double setpoint)
 double
 pid_update(GC_state s, double measurement)
 {
+    static const double integratorBound = 5.0;
     GC_PIDController ctrlr = s->pidController;
-    double dt = (double)s->pidStatistics.bytesAllocated / (1 << 10);
+    const double dt = (double)s->pidStatistics.bytesAllocated / (1 << 10);
     if (s->controls.messages)
     {
         fprintf(stderr, "[GC: dt=%f ", dt);
@@ -40,15 +44,24 @@ pid_update(GC_state s, double measurement)
                     i+1 == PID_STATS_WIN_SIZE ? "" : ", ");
         fprintf(stderr, "]]\n");
     }
-    double err = ctrlr->setpoint - measurement;
-    double P = ctrlr->Kp * err;
-    double I = ctrlr->Ki*dt*0.5 * (err + ctrlr->prevErr[0]) + ctrlr->prevI;
-    double D = ctrlr->Kd*2.0/dt * (err - ctrlr->prevErr[0]) - ctrlr->prevD;
-    // double D = ctrlr->Kd * (err - ctrlr->prevErr[0]) / dt;
-    ctrlr->prevErr[0] = err;
+    const double err = measurement - ctrlr->setpoint; // -(sp-pv)
+    const double P = ctrlr->Kp * err;
+    double I = 0.5*ctrlr->Ki*dt * (err + ctrlr->prevErr[0]) + ctrlr->prevI;
+    const double D = 2.0*ctrlr->Kd/dt * (err - ctrlr->prevErr[0]) - ctrlr->prevD;
+    // const double D = ctrlr->Kd * (err - ctrlr->prevErr[0]) / dt;
+    if (I > integratorBound)
+        I = integratorBound;
+    else if (I < -integratorBound)
+        I = -integratorBound;
     ctrlr->prevI = I;
     ctrlr->prevD = D;
-    return P + I + D;
+    ctrlr->prevErr[0] = err;
+    double out = P + I + D;
+    if (out < minOut)
+        out = minOut;
+    else if (out > maxOut)
+        out = maxOut;
+    return out;
 }
 
 double
@@ -66,7 +79,7 @@ pid_update2(GC_state s, double measurement)
                     i+1 == PID_STATS_WIN_SIZE ? "" : ", ");
         fprintf(stderr, "]]\n");
     }
-    const double err = ctrlr->setpoint - measurement;
+    const double err = measurement - ctrlr->setpoint; // -(sp-pv)
     const double a0 = ctrlr->Kp + ctrlr->Ki*dt*0.5 + ctrlr->Kd/dt;
     const double a1 = ctrlr->Ki*dt*0.5 - ctrlr->Kp - 2.0*ctrlr->Kd/dt;
     const double a2 = ctrlr->Kd / dt;
@@ -74,10 +87,14 @@ pid_update2(GC_state s, double measurement)
     // const double b1 = -1.0;
     // const double b2 = 0.0;
     // const out = 1/b0 * (a0*err + a1*ctrlr->prevErr[1] + a2*ctrlr->prevErr[0] - b1*ctrlr->prevOut);
-    const double out = a0*err + a1*ctrlr->prevErr[1] + a2*ctrlr->prevErr[0] + ctrlr->prevOut;
+    double out = a0*err + a1*ctrlr->prevErr[1] + a2*ctrlr->prevErr[0] + ctrlr->prevOut;
+    if (out < minOut)
+        out = minOut;
+    else if (out > maxOut)
+        out = maxOut;
+    ctrlr->prevOut = out;
     ctrlr->prevErr[0] = ctrlr->prevErr[1];
     ctrlr->prevErr[1] = err;
-    ctrlr->prevOut = out;
     return out;
 }
 
