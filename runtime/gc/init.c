@@ -22,6 +22,7 @@ static bool stringToBool (char *s) {
 // From gdtoa/gdtoa.h.
 // Can't include the whole thing because it brings in too much junk.
 float gdtoa__strtof (const char *, char **);
+double gdtoa__strtod (const char *, char **);
 
 static float stringToFloat (char *s) {
   char *endptr;
@@ -31,6 +32,16 @@ static float stringToFloat (char *s) {
   if (s == endptr)
     die ("Invalid @MLton float: %s.", s);
   return f;
+}
+
+static double
+stringToDouble (char* nptr)
+{
+    char* endptr;
+    double d = gdtoa__strtod (nptr, &endptr);
+    if (nptr == endptr)
+      die ("Invalid @MLton double: %s.", nptr);
+    return d;
 }
 
 static size_t stringToBytes (char *s) {
@@ -250,6 +261,41 @@ int processAtMLton (GC_state s, int start, int argc, char **argv,
           if (i == argc || 0 == strcmp (argv[i], "--"))
             die ("@MLton use-mmap missing argument.");
           GC_setCygwinUseMmap (stringToBool (argv[i++]));
+        }
+        else if (0 == strcmp (arg, "gc-pid-setpoint")) {
+          i++;
+          if (i == argc || 0 == strcmp (argv[i], "--"))
+            die ("@MLton gc-pid-setpoint missing argument.");
+          const double setpoint = stringToDouble (argv[i++]);
+          fprintf (stderr, "--- [PID] setpoint=%f\n", setpoint);
+          pid_set_setpoint(s, setpoint);
+          s->pidStatistics.avgGCOverhead = setpoint;
+          for (int j = 0; j < PID_STATS_WIN_SIZE; j++)
+            s->pidStatistics.recentGCOverheads[j] = setpoint;
+        }
+        else if (0 == strcmp (arg, "gc-pid-kp")) {
+          i++;
+          if (i == argc || 0 == strcmp (argv[i], "--"))
+            die ("@MLton gc-pid-kp missing argument.");
+          const double kp = stringToDouble (argv[i++]);
+          fprintf (stderr, "--- [PID] Kp=%f\n", kp);
+          pid_set_kp(s, kp);
+        }
+        else if (0 == strcmp (arg, "gc-pid-ki")) {
+          i++;
+          if (i == argc || 0 == strcmp (argv[i], "--"))
+            die ("@MLton gc-pid-ki missing argument.");
+          const double ki = stringToDouble (argv[i++]);
+          fprintf (stderr, "--- [PID] Ki=%f\n", ki);
+          pid_set_ki(s, ki);
+        }
+        else if (0 == strcmp (arg, "gc-pid-kd")) {
+          i++;
+          if (i == argc || 0 == strcmp (argv[i], "--"))
+            die ("@MLton gc-pid-kd missing argument.");
+          const double kd = stringToDouble (argv[i++]);
+          fprintf (stderr, "--- [PID] Kd=%f\n", kd);
+          pid_set_kd(s, kd);
         } else if (0 == strcmp (arg, "--")) {
           i++;
           done = TRUE;
@@ -337,7 +383,7 @@ int GC_init (GC_state s, int argc, char **argv) {
   Ki = 0.00010546875;
   Kd = 166.667; // 192000.0;
   setpoint = 0.05;
-  s->pidStatistics.winGCOverhead = setpoint;
+  s->pidStatistics.avgGCOverhead = setpoint;
   for (int i = 0; i < PID_STATS_WIN_SIZE; i++)
       s->pidStatistics.recentGCOverheads[i] = setpoint;
   s->pidController = new_controller(Kp, Ki, Kd, setpoint);

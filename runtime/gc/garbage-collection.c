@@ -43,27 +43,30 @@ void majorGC (GC_state s, size_t bytesRequested, bool mayResize) {
   clock_gettime(CLOCK_MONOTONIC, &afterGC);
   pid_accgctime(&s->pidStatistics.gcTimeAcc, &beforeGC, &afterGC);
   const double gcOverhead = pid_measure(s, &afterGC);
-  s->pidStatistics.winGCOverhead = (PID_STATS_WIN_SIZE
-                                    * s->pidStatistics.winGCOverhead
+  s->pidStatistics.avgGCOverhead = (PID_STATS_WIN_SIZE
+                                    * s->pidStatistics.avgGCOverhead
                                     - s->pidStatistics.recentGCOverheads[0]
                                     + gcOverhead)
                                    / PID_STATS_WIN_SIZE;
-  if (s->controls.messages)
-      fprintf(stderr, "[GC: PID measurement %f/%f/%sMB]\n",
-              gcOverhead,
-              s->pidStatistics.winGCOverhead,
-              uintmaxToCommaString(s->cumulativeStatistics.bytesAllocated >> 20));
   s->pidStatistics.bytesAllocated = s->cumulativeStatistics.bytesAllocated
                                   - s->pidStatistics.bytesAllocated;
-  // const double pidOut = pid_update(s, s->pidStatistics.winGCOverhead);
-  // const double pidOut = pid_update(s, gcOverhead);
-  const double pidOut = pid_update2(s, gcOverhead);
-  if (s->controls.messages)
-      fprintf(stderr, "[GC: PID output %f]\n", pidOut);
   memmove(s->pidStatistics.recentGCOverheads,
           s->pidStatistics.recentGCOverheads + 1,
           (PID_STATS_WIN_SIZE-1) * sizeof(double));
   s->pidStatistics.recentGCOverheads[PID_STATS_WIN_SIZE-1] = gcOverhead;
+  const double medianOverhead = pid_overhead_median(s);
+  if (s->controls.messages)
+      fprintf(stderr, "[GC: PID measurement raw=%f/avg=%f/med=%f/%sMB]\n",
+              gcOverhead,
+              s->pidStatistics.avgGCOverhead,
+              medianOverhead,
+              uintmaxToCommaString(s->cumulativeStatistics.bytesAllocated >> 20));
+  // const double pidOut = pid_update(s, s->pidStatistics.avgGCOverhead);
+  // const double pidOut = pid_update(s, gcOverhead);
+  // const double pidOut = pid_update2(s, gcOverhead);
+  const double pidOut = pid_update2(s, medianOverhead);
+  if (s->controls.messages)
+      fprintf(stderr, "[GC: PID output %f]\n", pidOut);
   s->pidStatistics.bytesAllocated = s->cumulativeStatistics.bytesAllocated;
   s->pidStatistics.lastMajorGC.tv_sec = afterGC.tv_sec;
   s->pidStatistics.lastMajorGC.tv_nsec = afterGC.tv_nsec;
@@ -90,7 +93,7 @@ void majorGC (GC_state s, size_t bytesRequested, bool mayResize) {
       shrinkHeap(s, &s->heap, newSize);
   else if (newSize > s->heap.size) {
       releaseHeap(s, &s->secondaryHeap);
-      growHeap(s, newSize, s->heap.oldGenSize + bytesRequested);
+      growHeap(s, newSize, align(s->heap.oldGenSize + bytesRequested, s->sysvals.pageSize));
   }
   /* Notice that the s->lastMajorStatistics.bytesLive below is
    * different than the s->lastMajorStatistics.bytesLive used as an

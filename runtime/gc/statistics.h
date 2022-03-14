@@ -48,7 +48,7 @@ struct GC_PIDStatistics {
     struct timespec lastMajorGC;
     struct timespec gcTimeAcc; // accumulator
     uintmax_t bytesAllocated;
-    double winGCOverhead;
+    double avgGCOverhead;
     double recentGCOverheads[PID_STATS_WIN_SIZE];
 };
 

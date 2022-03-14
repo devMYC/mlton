@@ -28,6 +28,30 @@ new_controller(double Kp, double Ki, double Kd, double setpoint)
     return ctrlr;
 }
 
+void
+pid_set_kp(GC_state s, double kp)
+{
+    s->pidController->Kp = kp;
+}
+
+void
+pid_set_ki(GC_state s, double ki)
+{
+    s->pidController->Ki = ki;
+}
+
+void
+pid_set_kd(GC_state s, double kd)
+{
+    s->pidController->Kd = kd;
+}
+
+void
+pid_set_setpoint(GC_state s, double sp)
+{
+    s->pidController->setpoint = sp;
+}
+
 double
 pid_update(GC_state s, double measurement)
 {
@@ -129,5 +153,25 @@ pid_measure(GC_state s, struct timespec *now)
     struct timespec *acc = &s->pidStatistics.gcTimeAcc;
     double gcsec = acc->tv_sec + (double)acc->tv_nsec / BILLION;
     return gcsec / pid_timediff(&s->pidStatistics.lastMajorGC, now);
+}
+
+double
+pid_overhead_median(GC_state s)
+{
+    double window[PID_STATS_WIN_SIZE];
+    memcpy(window, s->pidStatistics.recentGCOverheads, PID_STATS_WIN_SIZE*sizeof(double));
+    // insertion sort is used since the window size is relatively small
+    for (int i = 1; i < PID_STATS_WIN_SIZE; i++)
+    {
+        int j = i;
+        while (j > 0 && window[j-1] > window[j])
+        {
+            double temp = window[j];
+            window[j] = window[j-1];
+            window[j-1] = temp;
+            j--;
+        }
+    }
+    return window[PID_STATS_WIN_SIZE / 2];
 }
 
