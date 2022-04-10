@@ -9,9 +9,6 @@ struct _GC_PIDController {
     double prevOut;
 };
 
-static const double minOut = -0.5;
-static const double maxOut = 7.0;
-
 GC_PIDController
 new_controller(double Kp, double Ki, double Kd, double setpoint)
 {
@@ -53,11 +50,11 @@ pid_set_setpoint(GC_state s, double sp)
 }
 
 double
-pid_update(GC_state s, double measurement)
+pid_update(GC_state s, const double measurement, const double dt)
 {
     static const double integratorBound = 5.0;
+    static bool first = TRUE;
     GC_PIDController ctrlr = s->pidController;
-    const double dt = (double)s->pidStatistics.bytesAllocated / (1 << 10);
     if (s->controls.messages)
     {
         fprintf(stderr, "[GC: dt=%f ", dt);
@@ -68,33 +65,39 @@ pid_update(GC_state s, double measurement)
                     i+1 == PID_STATS_WIN_SIZE ? "" : ", ");
         fprintf(stderr, "]]\n");
     }
-    const double err = measurement - ctrlr->setpoint; // -(sp-pv)
+    const double err = measurement - ctrlr->setpoint;
+    if (first)
+    {
+        ctrlr->prevErr[0] = err;
+        first = FALSE;
+    }
     const double P = ctrlr->Kp * err;
     double I = 0.5*ctrlr->Ki*dt * (err + ctrlr->prevErr[0]) + ctrlr->prevI;
     const double D = 2.0*ctrlr->Kd/dt * (err - ctrlr->prevErr[0]) - ctrlr->prevD;
     // const double D = ctrlr->Kd * (err - ctrlr->prevErr[0]) / dt;
-    if (I > integratorBound)
-        I = integratorBound;
-    else if (I < -integratorBound)
-        I = -integratorBound;
+
+    if (I > integratorBound) I = integratorBound;
+    else if (I < -integratorBound) I = -integratorBound;
+
     ctrlr->prevI = I;
     ctrlr->prevD = D;
     ctrlr->prevErr[0] = err;
     double out = P + I + D;
-    if (out < minOut)
-        out = minOut;
-    else if (out > maxOut)
-        out = maxOut;
     return out;
 }
 
 double
-pid_update2(GC_state s, double measurement)
+pid_update2(GC_state s,
+            const double measurement,
+            const double dt,
+            const double minOut,
+            const double maxOut)
 {
+    static bool first = TRUE;
     GC_PIDController ctrlr = s->pidController;
-    const double dt = (double)s->pidStatistics.bytesAllocated / (1 << 10);
     if (s->controls.messages)
     {
+        fprintf(stderr, "[GC: Kp=%f, Ki=%f, Kd=%f]\n", ctrlr->Kp, ctrlr->Ki, ctrlr->Kd);
         fprintf(stderr, "[GC: dt=%f ", dt);
         fprintf(stderr, "recentGCOverheads=[");
         for (int i = 0; i < PID_STATS_WIN_SIZE; i++)
@@ -103,19 +106,27 @@ pid_update2(GC_state s, double measurement)
                     i+1 == PID_STATS_WIN_SIZE ? "" : ", ");
         fprintf(stderr, "]]\n");
     }
-    const double err = measurement - ctrlr->setpoint; // -(sp-pv)
-    const double a0 = ctrlr->Kp + ctrlr->Ki*dt*0.5 + ctrlr->Kd/dt;
-    const double a1 = ctrlr->Ki*dt*0.5 - ctrlr->Kp - 2.0*ctrlr->Kd/dt;
-    const double a2 = ctrlr->Kd / dt;
-    // const double b0 = 1.0;
-    // const double b1 = -1.0;
-    // const double b2 = 0.0;
-    // const out = 1/b0 * (a0*err + a1*ctrlr->prevErr[1] + a2*ctrlr->prevErr[0] - b1*ctrlr->prevOut);
-    double out = a0*err + a1*ctrlr->prevErr[1] + a2*ctrlr->prevErr[0] + ctrlr->prevOut;
-    if (out < minOut)
-        out = minOut;
-    else if (out > maxOut)
-        out = maxOut;
+    const double err = measurement - ctrlr->setpoint;
+    if (first)
+    {
+        ctrlr->prevErr[0] = ctrlr->prevErr[1] = err;
+        first = FALSE;
+    }
+    const double b0 = ctrlr->Kp + ctrlr->Ki*dt*0.5 + ctrlr->Kd/dt;
+    const double b1 = ctrlr->Ki*dt*0.5 - ctrlr->Kp - 2.0*ctrlr->Kd/dt;
+    const double b2 = ctrlr->Kd / dt;
+    // const double a0 = 1.0;
+    // const double a1 = -1.0;
+    // const double a2 = 0.0;
+
+    // u[n] = b0*e[n] + b1*e[n-1] + b2*e[n-2] + u[n-1]
+    double out = b0*err + b1*ctrlr->prevErr[1] + b2*ctrlr->prevErr[0] + ctrlr->prevOut;
+    if (s->controls.messages)
+        fprintf(stderr, "--- err=%f, out=%f\n", err, out);
+
+    if (out < minOut) out = minOut;
+    else if (out > maxOut) out = maxOut;
+
     ctrlr->prevOut = out;
     ctrlr->prevErr[0] = ctrlr->prevErr[1];
     ctrlr->prevErr[1] = err;

@@ -72,6 +72,7 @@ void setGCStateCurrentHeap (GC_state s,
       s->mutatorMarksCards
       /* There is enough space in the generational nursery. */
       and (nurseryBytesRequested <= genNurserySize)
+      and (genNurserySize >= (4 << 20)) // at least 4MB
       /* The nursery is large enough to be worth it. */
       and (((float)(h->size - s->lastMajorStatistics.bytesLive) 
             / (float)nurserySize) 

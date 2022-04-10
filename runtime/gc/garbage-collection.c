@@ -54,46 +54,51 @@ void majorGC (GC_state s, size_t bytesRequested, bool mayResize) {
           s->pidStatistics.recentGCOverheads + 1,
           (PID_STATS_WIN_SIZE-1) * sizeof(double));
   s->pidStatistics.recentGCOverheads[PID_STATS_WIN_SIZE-1] = gcOverhead;
-  const double medianOverhead = pid_overhead_median(s);
-  if (s->controls.messages)
-      fprintf(stderr, "[GC: PID measurement raw=%f/avg=%f/med=%f/%sMB]\n",
-              gcOverhead,
-              s->pidStatistics.avgGCOverhead,
-              medianOverhead,
-              uintmaxToCommaString(s->cumulativeStatistics.bytesAllocated >> 20));
-  // const double pidOut = pid_update(s, s->pidStatistics.avgGCOverhead);
-  // const double pidOut = pid_update(s, gcOverhead);
-  // const double pidOut = pid_update2(s, gcOverhead);
-  const double pidOut = pid_update2(s, medianOverhead);
-  if (s->controls.messages)
-      fprintf(stderr, "[GC: PID output %f]\n", pidOut);
-  s->pidStatistics.bytesAllocated = s->cumulativeStatistics.bytesAllocated;
-  s->pidStatistics.lastMajorGC.tv_sec = afterGC.tv_sec;
-  s->pidStatistics.lastMajorGC.tv_nsec = afterGC.tv_nsec;
-  s->pidStatistics.gcTimeAcc.tv_sec = 0;
-  s->pidStatistics.gcTimeAcc.tv_nsec = 0;
-  double ratio = 1.0 + pidOut;
-  const double liveRatio = (double)s->heap.oldGenSize / s->heap.size;
-  if (ratio < 1.0) // we're about to shrink the heap
-      ratio = max(ratio, liveRatio / 0.6); // keep at least 40% free space
-  // else if (s->lastMajorStatistics.kind == GC_MARK_COMPACT)
-  //     ratio = liveRatio / 0.3; // keep at most 70% free space
-  size_t newSize;
-  if (ratio > 1.0 && (double)s->sysvals.ram / s->heap.size < ratio)
-      newSize = s->sysvals.ram;
-  else
-      newSize = align(((size_t)(ratio * (double)(s->heap.size >> 10)) << 10) + bytesRequested,
-                      s->sysvals.pageSize);
-  newSize = min(s->sysvals.ram, newSize);
-  if (s->controls.messages)
-      fprintf(stderr, "[GC: old/new heap size: %s/%s]\n",
-              uintmaxToCommaString(s->heap.size),
-              uintmaxToCommaString(newSize));
-  if (newSize < s->heap.size)
-      shrinkHeap(s, &s->heap, newSize);
-  else if (newSize > s->heap.size) {
-      releaseHeap(s, &s->secondaryHeap);
-      growHeap(s, newSize, align(s->heap.oldGenSize + bytesRequested, s->sysvals.pageSize));
+  if (mayResize) {
+    const double medianOverhead = pid_overhead_median(s);
+    if (s->controls.messages)
+        fprintf(stderr, "[GC: PID measurement raw=%f/avg=%f/med=%f/%sMB]\n",
+                gcOverhead,
+                s->pidStatistics.avgGCOverhead,
+                medianOverhead,
+                uintmaxToCommaString(s->cumulativeStatistics.bytesAllocated >> 20));
+    const double dt = (double)s->pidStatistics.bytesAllocated / (1 << 10); // to kB
+    // const double pidOut = pid_update(s, s->pidStatistics.avgGCOverhead, dt);
+    // const double pidOut = pid_update(s, gcOverhead, dt);
+    const double pidOut = pid_update2(s, gcOverhead, dt, -0.5, 1.0);
+    // const double pidOut = pid_update2(s, medianOverhead, dt, 0.5, 2.0);
+    if (s->controls.messages)
+        fprintf(stderr, "[GC: PID output %f]\n", pidOut);
+    s->pidStatistics.bytesAllocated = s->cumulativeStatistics.bytesAllocated;
+    s->pidStatistics.lastMajorGC.tv_sec = afterGC.tv_sec;
+    s->pidStatistics.lastMajorGC.tv_nsec = afterGC.tv_nsec;
+    s->pidStatistics.gcTimeAcc.tv_sec = 0;
+    s->pidStatistics.gcTimeAcc.tv_nsec = 0;
+    const double liveRatio = (double)s->heap.oldGenSize / s->heap.size;
+    const double ratio = max(liveRatio/0.6, 1.0+pidOut);
+    const size_t oldHeapSize = s->heap.size;
+    size_t newHeapSize = s->heap.size;
+    if (ratio > 1.0 and s->heap.size >= s->sysvals.ram)
+        newHeapSize = s->heap.size + bytesRequested;
+    else if (ratio > 1.0 and (double)s->sysvals.ram / s->heap.size < ratio)
+        newHeapSize = s->sysvals.ram + bytesRequested;
+    else if (not (ratio == 1.0) or s->heap.size - s->heap.oldGenSize < bytesRequested)
+        newHeapSize = (size_t)(ratio * (double)s->heap.size) + bytesRequested;
+    newHeapSize = align(newHeapSize, s->sysvals.pageSize);
+    bool changed = FALSE;
+    if (ratio <= 0.9) {
+        shrinkHeap(s, &s->heap, newHeapSize);
+        changed = TRUE;
+    }
+    else if (ratio >= 1.4) {
+        releaseHeap(s, &s->secondaryHeap);
+        growHeap(s, newHeapSize, align(s->lastMajorStatistics.bytesLive + bytesRequested, s->sysvals.pageSize));
+        changed = TRUE;
+    }
+    if (changed and s->controls.messages)
+        fprintf(stderr, "[GC: old/new heap size: %s/%s]\n",
+                uintmaxToCommaString(oldHeapSize),
+                uintmaxToCommaString(newHeapSize));
   }
   /* Notice that the s->lastMajorStatistics.bytesLive below is
    * different than the s->lastMajorStatistics.bytesLive used as an
